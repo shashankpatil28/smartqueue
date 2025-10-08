@@ -37,5 +37,6 @@ services:
       - ./worker:/worker
     environment:
       - REDIS_HOST=redis
+      - SCHEDULING_STRATEGY=round_robin # can be 'priority' or 'round_robin'
     depends_on:
       - redis

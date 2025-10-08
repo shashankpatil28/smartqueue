@@ -4,11 +4,15 @@ import redis
 import json
 import time
 import os
+import redis
+
 from concurrent.futures import ThreadPoolExecutor
 # Add threading for our non-blocking retry delay
 from threading import Timer
 from tasks import TASK_REGISTRY
 
+# --- Local Imports ---
+from scheduler import PriorityScheduler, RoundRobinScheduler
 # --- Constants remain the same ---
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = 6379
@@ -65,20 +69,33 @@ def process_task(task_data: str):
             # For now, we'll just log it.
             redis_client.lpush("dead_letter_queue", task_data)
 
-# --- The main() function remains exactly the same ---
+
+# --- Main function is updated ---
 def main():
-    print("🚀 Starting SmartQueue Worker with Priority Scheduling & Retries...")
+    # Read the desired strategy from an environment variable
+    strategy = os.getenv("SCHEDULING_STRATEGY", "priority").lower()
+    
+    print(f"🚀 Starting SmartQueue Worker...")
     r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
-    print(f"Worker connected to Redis, listening on queue '{PRIORITY_QUEUE_NAME}'")
+
+    # Instantiate the correct scheduler based on the strategy
+    if strategy == "round_robin":
+        scheduler = RoundRobinScheduler(r)
+        print("Using Round Robin scheduling strategy.")
+    else: # Default to priority
+        scheduler = PriorityScheduler(r)
+        print("Using Priority scheduling strategy.")
+
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         while True:
             try:
-                result = r.bzpopmax(PRIORITY_QUEUE_NAME)
-                if result is None: continue
-                _, unique_task_member, score = result
-                print(f"\n📨 Dispatching task with priority {int(score)}...")
-                task_data = unique_task_member.split(":", 1)[1]
-                executor.submit(process_task, task_data)
+                # The worker's only job is to ask the scheduler for a task
+                task_data = scheduler.get_task()
+                
+                if task_data:
+                    # And then submit it to the thread pool
+                    executor.submit(process_task, task_data)
+
             except redis.exceptions.ConnectionError as e:
                 print(f"Redis connection error: {e}. Retrying in 5 seconds...")
                 time.sleep(5)

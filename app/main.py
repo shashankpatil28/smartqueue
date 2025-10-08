@@ -8,6 +8,12 @@ from contextlib import asynccontextmanager
 from .schemas import Task
 from .core.config import REDIS_HOST, REDIS_PORT
 
+# --- Add these for Round Robin logic ---
+from threading import Lock
+round_robin_counter = 0
+rr_lock = Lock()
+ROUND_ROBIN_QUEUES = ["rr_queue_1", "rr_queue_2", "rr_queue_3"]
+
 # --- Lifespan function remains the same ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -48,26 +54,27 @@ PRIORITY_QUEUE_NAME = "priority_queue"
 @app.post("/submit", status_code=202)
 async def submit_task(task: Task):
     """
-    Accepts a task and adds it to the priority queue (a Redis Sorted Set).
+    Accepts a task and queues it based on priority or round-robin strategy.
     """
+    global round_robin_counter
     if not app.state.redis:
         raise HTTPException(status_code=503, detail="Redis connection not available")
 
-    try:
-        task_data = task.model_dump_json()
+    task_data = task.model_dump_json()
 
-        # Sorted Set members must be unique. We'll ensure this by using
-        # the unique task_id we generate in the Pydantic model.
-        # This prevents identical tasks from being treated as duplicates.
+    # --- Use Priority Queue if priority is explicitly high or low ---
+    if task.priority > 5 or task.priority < 5:
         unique_task_member = f"{task.task_id}:{task_data}"
-
-        # ZADD adds a member to the sorted set with a score.
-        # We use the task's priority as the score.
-        await app.state.redis.zadd(
-            PRIORITY_QUEUE_NAME,
-            {unique_task_member: task.priority}
-        )
-
-        return {"message": "Task accepted with priority " + str(task.priority), "task_id": task.task_id}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(e)}")
+        await app.state.redis.zadd("priority_queue", {unique_task_member: task.priority})
+        return {"message": "Task accepted to priority queue", "task_id": task.task_id}
+    
+    # --- Otherwise, distribute to Round Robin queues ---
+    else:
+        with rr_lock:
+            queue_index = round_robin_counter % len(ROUND_ROBIN_QUEUES)
+            target_queue = ROUND_ROBIN_QUEUES[queue_index]
+            round_robin_counter += 1
+        
+        # We use LPUSH for FIFO behavior within each round-robin queue
+        await app.state.redis.lpush(target_queue, task_data)
+        return {"message": f"Task accepted to round-robin queue '{target_queue}'", "task_id": task.task_id}
