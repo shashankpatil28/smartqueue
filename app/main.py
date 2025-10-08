@@ -42,24 +42,32 @@ async def test_redis_connection():
     return {"status": "success", "message": "Redis connection is healthy"}
 
 
-# --- ADD THE NEW ENDPOINT BELOW ---
+# Let's use a new queue name for clarity
+PRIORITY_QUEUE_NAME = "priority_queue"
 
 @app.post("/submit", status_code=202)
 async def submit_task(task: Task):
     """
-    Accepts a task and pushes it onto the 'default_queue' in Redis.
+    Accepts a task and adds it to the priority queue (a Redis Sorted Set).
     """
     if not app.state.redis:
         raise HTTPException(status_code=503, detail="Redis connection not available")
 
     try:
-        # Convert the Pydantic task model to a JSON string for storage
         task_data = task.model_dump_json()
 
-        # LPUSH adds the task to the beginning (left side) of the list.
-        # A worker using RPOP will process tasks in FIFO order.
-        await app.state.redis.lpush("default_queue", task_data)
+        # Sorted Set members must be unique. We'll ensure this by using
+        # the unique task_id we generate in the Pydantic model.
+        # This prevents identical tasks from being treated as duplicates.
+        unique_task_member = f"{task.task_id}:{task_data}"
 
-        return {"message": "Task accepted", "task_id": task.task_id}
+        # ZADD adds a member to the sorted set with a score.
+        # We use the task's priority as the score.
+        await app.state.redis.zadd(
+            PRIORITY_QUEUE_NAME,
+            {unique_task_member: task.priority}
+        )
+
+        return {"message": "Task accepted with priority " + str(task.priority), "task_id": task.task_id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(e)}")
