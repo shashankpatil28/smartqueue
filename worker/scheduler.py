@@ -51,3 +51,50 @@ class RoundRobinScheduler(BaseScheduler):
             print(f"\n📨 RoundRobinScheduler: Fetched task from '{queue}'...")
             return task_data
         return None
+
+
+class WeightedRoundRobinScheduler(BaseScheduler):
+    """
+    Fetches tasks from queues based on a predefined weight for each queue.
+    Queues with a higher weight are polled more frequently.
+    """
+    QUEUES_WITH_WEIGHTS = {
+        "wrr_queue_high": 5,
+        "wrr_queue_medium": 3,
+        "wrr_queue_low": 1,
+    }
+
+    def __init__(self, redis_client: redis.Redis):
+        super().__init__(redis_client)
+        self._sequence = self._generate_sequence()
+        self._index = 0
+        print(f"WRR sequence generated: {self._sequence}")
+
+    def _generate_sequence(self):
+        """Generates the weighted list of queues to poll."""
+        sequence = []
+        for queue_name, weight in self.QUEUES_WITH_WEIGHTS.items():
+            sequence.extend([queue_name] * weight)
+        return sequence
+
+    def get_task(self):
+        """
+        Cycles through the weighted sequence, attempting to pop a task from each.
+        """
+        # Loop indefinitely until a task is found
+        while True:
+            # Get the next queue from our weighted sequence
+            queue_name = self._sequence[self._index]
+            
+            # Move to the next index for the next call, looping back to the start
+            self._index = (self._index + 1) % len(self._sequence)
+
+            # BLPOP with a 1-second timeout. If a task exists, it's returned.
+            # If not, it returns None after 1s, and we continue to the next queue.
+            result = self.redis.blpop([queue_name], timeout=1)
+
+            if result:
+                queue, task_data = result
+                print(f"\n📨 WeightedRRScheduler: Fetched task from '{queue}'...")
+                return task_data
+            # If no task was found, the loop continues to the next queue in the sequence.

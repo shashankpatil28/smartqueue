@@ -12,7 +12,7 @@ from threading import Timer
 from tasks import TASK_REGISTRY
 
 # --- Local Imports ---
-from scheduler import PriorityScheduler, RoundRobinScheduler
+from scheduler import PriorityScheduler, RoundRobinScheduler, WeightedRoundRobinScheduler
 # --- Constants remain the same ---
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = 6379
@@ -78,10 +78,13 @@ def main():
     print(f"🚀 Starting SmartQueue Worker...")
     r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
 
-    # Instantiate the correct scheduler based on the strategy
+     # --- UPDATE THIS BLOCK ---
     if strategy == "round_robin":
         scheduler = RoundRobinScheduler(r)
         print("Using Round Robin scheduling strategy.")
+    elif strategy == "weighted_round_robin":
+        scheduler = WeightedRoundRobinScheduler(r)
+        print("Using Weighted Round Robin scheduling strategy.")
     else: # Default to priority
         scheduler = PriorityScheduler(r)
         print("Using Priority scheduling strategy.")

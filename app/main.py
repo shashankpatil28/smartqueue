@@ -54,27 +54,23 @@ PRIORITY_QUEUE_NAME = "priority_queue"
 @app.post("/submit", status_code=202)
 async def submit_task(task: Task):
     """
-    Accepts a task and queues it based on priority or round-robin strategy.
+    Accepts a task and queues it based on priority, mapping it to
+    a weighted queue for the WRR scheduler.
     """
-    global round_robin_counter
     if not app.state.redis:
         raise HTTPException(status_code=503, detail="Redis connection not available")
 
     task_data = task.model_dump_json()
 
-    # --- Use Priority Queue if priority is explicitly high or low ---
-    if task.priority > 5 or task.priority < 5:
-        unique_task_member = f"{task.task_id}:{task_data}"
-        await app.state.redis.zadd("priority_queue", {unique_task_member: task.priority})
-        return {"message": "Task accepted to priority queue", "task_id": task.task_id}
+    # Map priority score to a specific weighted queue
+    if task.priority >= 8: # Priority 8, 9, 10
+        target_queue = "wrr_queue_high"
+    elif task.priority >= 4: # Priority 4, 5, 6, 7
+        target_queue = "wrr_queue_medium"
+    else: # Priority 0, 1, 2, 3
+        target_queue = "wrr_queue_low"
+
+    # For weighted queues, we can just use a simple list (FIFO)
+    await app.state.redis.lpush(target_queue, task_data)
     
-    # --- Otherwise, distribute to Round Robin queues ---
-    else:
-        with rr_lock:
-            queue_index = round_robin_counter % len(ROUND_ROBIN_QUEUES)
-            target_queue = ROUND_ROBIN_QUEUES[queue_index]
-            round_robin_counter += 1
-        
-        # We use LPUSH for FIFO behavior within each round-robin queue
-        await app.state.redis.lpush(target_queue, task_data)
-        return {"message": f"Task accepted to round-robin queue '{target_queue}'", "task_id": task.task_id}
+    return {"message": f"Task accepted to weighted queue '{target_queue}'", "task_id": task.task_id}
