@@ -19,10 +19,11 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      # Mounts the host 'app' directory into the container for live-reloading
       - ./app:/app
     environment:
       - REDIS_HOST=redis
+      # --- THIS LINE IS CRUCIAL AND WAS ADDED ---
+      - SCHEDULING_STRATEGY=weighted_round_robin # Must match the worker's strategy
     depends_on:
       - redis
 
@@ -33,10 +34,9 @@ services:
       context: .
       dockerfile: Dockerfile.worker
     volumes:
-      # Mounts the host 'worker' directory for easy development
       - ./worker:/worker
     environment:
       - REDIS_HOST=redis
-      - SCHEDULING_STRATEGY=weighted_round_robin # can be 'priority' or 'round_robin' or 'weighted_round_robin'
+      - SCHEDULING_STRATEGY=weighted_round_robin # Options: 'priority', 'round_robin', 'weighted_round_robin'
     depends_on:
       - redis
