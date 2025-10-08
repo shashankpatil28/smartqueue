@@ -4,12 +4,13 @@ import redis.asyncio as redis
 from fastapi import FastAPI, HTTPException
 from contextlib import asynccontextmanager
 
+# Add the Task schema import
+from .schemas import Task
 from .core.config import REDIS_HOST, REDIS_PORT
 
-# A lifespan manager is the modern way in FastAPI to handle startup/shutdown logic
+# --- Lifespan function remains the same ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Code to run on startup
     print(f"Connecting to Redis at {REDIS_HOST}:{REDIS_PORT}...")
     try:
         app.state.redis = await redis.from_url(
@@ -21,35 +22,44 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"Could not connect to Redis: {e}")
         app.state.redis = None
-    
     yield
-    
-    # Code to run on shutdown
     if app.state.redis:
         await app.state.redis.close()
         print("Redis connection closed.")
 
-# Create the FastAPI app instance with the lifespan manager
 app = FastAPI(title="SmartQueue API", version="1.0", lifespan=lifespan)
 
+# --- Root and test-redis endpoints remain the same ---
 @app.get("/")
 def read_root():
-    """
-    Root endpoint for a simple health check.
-    """
     return {"message": "SmartQueue API is running"}
 
 @app.get("/test-redis")
 async def test_redis_connection():
+    if not app.state.redis:
+        raise HTTPException(status_code=503, detail="Redis connection not available")
+    await app.state.redis.ping()
+    return {"status": "success", "message": "Redis connection is healthy"}
+
+
+# --- ADD THE NEW ENDPOINT BELOW ---
+
+@app.post("/submit", status_code=202)
+async def submit_task(task: Task):
     """
-    Endpoint to verify the connection to Redis is alive.
+    Accepts a task and pushes it onto the 'default_queue' in Redis.
     """
     if not app.state.redis:
         raise HTTPException(status_code=503, detail="Redis connection not available")
-    
+
     try:
-        # The PING command is a standard way to check Redis connectivity
-        await app.state.redis.ping()
-        return {"status": "success", "message": "Redis connection is healthy"}
+        # Convert the Pydantic task model to a JSON string for storage
+        task_data = task.model_dump_json()
+
+        # LPUSH adds the task to the beginning (left side) of the list.
+        # A worker using RPOP will process tasks in FIFO order.
+        await app.state.redis.lpush("default_queue", task_data)
+
+        return {"message": "Task accepted", "task_id": task.task_id}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to communicate with Redis: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(e)}")
