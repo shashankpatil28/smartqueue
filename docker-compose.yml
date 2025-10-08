@@ -1,0 +1,41 @@
+# In docker-compose.yml
+
+version: '3.8'
+
+services:
+  # The Redis message broker service
+  redis:
+    image: redis:7-alpine
+    container_name: smartqueue-redis
+    ports:
+      - "6379:6379"
+
+  # The FastAPI Producer service
+  api:
+    container_name: smartqueue-api
+    build:
+      context: .
+      dockerfile: Dockerfile.app
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mounts the host 'app' directory into the container for live-reloading
+      - ./app:/app
+    environment:
+      - REDIS_HOST=redis
+    depends_on:
+      - redis
+
+  # The Python Worker Consumer service
+  worker:
+    container_name: smartqueue-worker
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    volumes:
+      # Mounts the host 'worker' directory for easy development
+      - ./worker:/worker
+    environment:
+      - REDIS_HOST=redis
+    depends_on:
+      - redis
